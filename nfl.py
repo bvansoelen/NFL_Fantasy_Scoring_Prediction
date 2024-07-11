@@ -18,8 +18,9 @@ def preprocessing(filename):
     # Filter where week is >= 5
     df = df[(df['week'] >= 5) & (df['position'].isin(['QB', 'WR', 'RB', 'TE']))]
 
+    seasons = df['season'].unique()
     actual = df[['player_id', 'full_name', 'posteam', 'position', 'pass_attempt', 'rec_attempt', 'rush_attempt',
-                 'pass_completions', 'receptions',
+                 'pass_completions', 'receptions', 'season',
                  'pass_yards_gained', 'rec_yards_gained', 'rush_yards_gained',
                  'pass_touchdown', 'rec_touchdown', 'rush_touchdown',
                  'pass_two_point_conv', 'rec_two_point_conv', 'rush_two_point_conv',
@@ -30,7 +31,7 @@ def preprocessing(filename):
                        'pass_touchdown', 'rec_touchdown', 'rush_touchdown',
                        'pass_two_point_conv', 'rec_two_point_conv', 'rush_two_point_conv',
                        'pass_interception', 'fumble_lost', 'total_fantasy_points_exp',
-                       'season', 'game_id', 'player_id', 'full_name', 'week', 'posteam', 'opponent'], axis=1)
+                       'game_id', 'player_id', 'full_name', 'week', 'posteam', 'opponent'], axis=1)
 
     data = data.fillna(0)
 
@@ -42,41 +43,42 @@ def preprocessing(filename):
         dtype = pd.CategoricalDtype(categories=list(set(data[feature])), ordered=False)
         for df in [data]:
             df[feature] = df[feature].astype(dtype)
-    return data, actual
+    return data, actual, seasons
 
 
-def process(data, actual):
-    for position in data['position'].unique():
-        X_pos = data[data['position'] == position].drop('total_fantasy_points', axis=1)
-        y_pos = data[data['position'] == position].pop('total_fantasy_points')
-        X_train, X_test, y_train, y_test = train_test_split(X_pos, y_pos, test_size=0.2, random_state=42)
+def process(data, actual, seasons):
+    for season in seasons:
+        for position in data['position'].unique():
+            X_pos = data[(data['position'] == position) & (data['season'] == season)].drop('total_fantasy_points', axis=1)
+            y_pos = data[(data['position'] == position) & (data['season'] == season)].pop('total_fantasy_points')
+            X_train, X_test, y_train, y_test = train_test_split(X_pos, y_pos, test_size=0.2, random_state=42)
 
-        n_estimators = 1000
-        learning_rate = 0.05
-        param_grid = {'n_estimators': n_estimators, 'learning_rate': learning_rate, 'enable_categorical': True}
-        model = XGBRegressor(**param_grid)
-        model.fit(X_train, y_train)
+            n_estimators = 1000
+            learning_rate = 0.05
+            param_grid = {'n_estimators': n_estimators, 'learning_rate': learning_rate, 'enable_categorical': True}
+            model = XGBRegressor(**param_grid)
+            model.fit(X_train, y_train)
 
-        # RMSE Predicted from my model
-        preds = model.predict(X_test)
-        rmse = np.sqrt(mean_squared_error(y_test, preds))
+            # RMSE Predicted from my model
+            preds = model.predict(X_test)
+            rmse = np.sqrt(mean_squared_error(y_test, preds))
 
-        # RMSE based on actual fantasy predictions and scores
-        actual_rmse = np.sqrt(mean_squared_error(actual[actual['position'] == position]['total_fantasy_points'],
-                                                 actual[actual['position'] == position]['total_fantasy_points_exp']))
+            # RMSE based on actual fantasy predictions and scores
+            actual_rmse = np.sqrt(mean_squared_error(actual[(actual['position'] == position) & (actual['season'] == season)]['total_fantasy_points'],
+                                                     actual[(actual['position'] == position) & (actual['season'] == season)]['total_fantasy_points_exp']))
 
-        print(f'Predicted rmse for {position}  {rmse}')
-        print(f'Actual rmse for {position} {actual_rmse}')
+            print(f'{season} predicted rmse for {position}  {rmse}')
+            print(f'{season} actual rmse for {position} {actual_rmse}')
 
 
-data, actual = preprocessing('2021_to_2023_ff_data_w_fpt_avg_and_team_inj.csv')
+data, actual, seasons = preprocessing('NFL_Fantasy_Scoring_Prediction/2021_to_2023_ff_data_w_fpt_avg_and_team_inj.csv')
 
 # Run model
-process(data, actual)
+process(data, actual, seasons)
 
 ###############################
 # EDA
-df = pd.read_csv('2021_to_2023_ff_data_w_fpt_avg_and_team_inj.csv')
+df = pd.read_csv('NFL_Fantasy_Scoring_Prediction/2021_to_2023_ff_data_w_fpt_avg_and_team_inj.csv')
 df.describe()
 df.isna().sum()
 
