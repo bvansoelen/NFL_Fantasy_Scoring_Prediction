@@ -31,7 +31,7 @@ def preprocessing(filename):
                        'pass_touchdown', 'rec_touchdown', 'rush_touchdown',
                        'pass_two_point_conv', 'rec_two_point_conv', 'rush_two_point_conv',
                        'pass_interception', 'fumble_lost', 'total_fantasy_points_exp',
-                       'game_id', 'player_id', 'full_name', 'week', 'posteam', 'opponent'], axis=1)
+                       'game_id', 'full_name', 'posteam', 'opponent'], axis=1)
 
     data = data.fillna(0)
 
@@ -47,11 +47,17 @@ def preprocessing(filename):
 
 
 def process(data, actual, seasons):
+    predictions = pd.DataFrame(['player_id', 'week', 'prediction', 'actual'])
     for season in seasons:
         for position in data['position'].unique():
-            X_pos = data[(data['position'] == position) & (data['season'] == season)].drop('total_fantasy_points', axis=1)
+
+            X_pos = data[(data['position'] == position) & (data['season'] == season)].drop(['total_fantasy_points'], axis=1)
             y_pos = data[(data['position'] == position) & (data['season'] == season)].pop('total_fantasy_points')
             X_train, X_test, y_train, y_test = train_test_split(X_pos, y_pos, test_size=0.2, random_state=42)
+
+            attributes = X_test[['player_id', 'week']]
+            X_test = X_test.drop('player_id', axis=1)
+            X_train = X_train.drop('player_id', axis=1)
 
             n_estimators = 1000
             learning_rate = 0.05
@@ -63,18 +69,37 @@ def process(data, actual, seasons):
             preds = model.predict(X_test)
             rmse = np.sqrt(mean_squared_error(y_test, preds))
 
+            # Combine preds with Ids to see where the model is performing best
+            new_preds = pd.DataFrame({'player_id': attributes.player_id, 'week': attributes.week, 'prediction': preds, 'actual': y_test})
+
+            predictions = pd.concat([predictions, new_preds], ignore_index=True)
+
             # RMSE based on actual fantasy predictions and scores
             actual_rmse = np.sqrt(mean_squared_error(actual[(actual['position'] == position) & (actual['season'] == season)]['total_fantasy_points'],
                                                      actual[(actual['position'] == position) & (actual['season'] == season)]['total_fantasy_points_exp']))
 
             print(f'{season} predicted rmse for {position}  {rmse}')
             print(f'{season} actual rmse for {position} {actual_rmse}')
+    return predictions
 
 
 data, actual, seasons = preprocessing('NFL_Fantasy_Scoring_Prediction/2021_to_2023_ff_data_w_fpt_avg_and_team_inj.csv')
 
 # Run model
-process(data, actual, seasons)
+predicted_points = process(data, actual, seasons)
+
+# Which players and positions was I most accurate with
+predicted_points['absolute_error'] = abs(predicted_points['prediction'] - predicted_points['actual'])
+# predicted_points = predicted_points.dropna()
+
+player_names = pd.read_csv('NFL_Fantasy_Scoring_Prediction/2021_to_2023_ff_data_w_fpt_avg_and_team_inj.csv')
+player_names = player_names[(player_names['week'] >= 5) & (player_names['position'].isin(['QB', 'WR', 'RB', 'TE']))]
+player_names = player_names[['player_id', 'full_name', 'position']].drop_duplicates()
+
+
+predicted_points_test = pd.merge(predicted_points, player_names, on='player_id', how='left')
+abs_desc = predicted_points_test.sort_values(by='absolute_error', ascending=True)
+abs_desc.head()
 
 ###############################
 # EDA
