@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-import matplotlib as plt
+import matplotlib.pyplot as plt
 import seaborn as sns
 import xgboost
 from sklearn.metrics import mean_squared_error
@@ -47,7 +47,8 @@ def preprocessing(filename):
 
 
 def process(data, actual, seasons):
-    predictions = pd.DataFrame(['player_id', 'week', 'prediction', 'actual'])
+    predictions = pd.DataFrame()
+    feature_importances_df = pd.DataFrame()
     for season in seasons:
         for position in data['position'].unique():
 
@@ -70,7 +71,7 @@ def process(data, actual, seasons):
             rmse = np.sqrt(mean_squared_error(y_test, preds))
 
             # Combine preds with Ids to see where the model is performing best
-            new_preds = pd.DataFrame({'player_id': attributes.player_id, 'week': attributes.week, 'prediction': preds, 'actual': y_test})
+            new_preds = pd.DataFrame({'player_id': attributes.player_id, 'week': attributes.week, 'year': season, 'prediction': preds, 'actual': y_test})
 
             predictions = pd.concat([predictions, new_preds], ignore_index=True)
 
@@ -78,26 +79,95 @@ def process(data, actual, seasons):
             actual_rmse = np.sqrt(mean_squared_error(actual[(actual['position'] == position) & (actual['season'] == season)]['total_fantasy_points'],
                                                      actual[(actual['position'] == position) & (actual['season'] == season)]['total_fantasy_points_exp']))
 
+            # Add feature importances to df
+            # Extract feature importances
+            feature_importances = model.feature_importances_
+
+            # Create a DataFrame for the current feature importances
+            current_importances_df = pd.DataFrame(feature_importances, index=X_test.columns, columns=[str(season)])
+
+            # Append the current importances to the feature_importance_df
+            if feature_importances_df.empty:
+                feature_importances_df = current_importances_df
+            else:
+                feature_importances_df = pd.concat([feature_importances_df, current_importances_df], axis=1)
+
             print(f'{season} predicted rmse for {position}  {rmse}')
             print(f'{season} actual rmse for {position} {actual_rmse}')
-    return predictions
+    return predictions, feature_importances_df
 
 
 data, actual, seasons = preprocessing('NFL_Fantasy_Scoring_Prediction/2021_to_2023_ff_data_w_fpt_avg_and_team_inj.csv')
 
 # Run model
-predicted_points = process(data, actual, seasons)
+predicted_points, feature_imp = process(data, actual, seasons)
 
+feature_imp.head
 # Which players and positions was I most accurate with
 predicted_points['absolute_error'] = abs(predicted_points['prediction'] - predicted_points['actual'])
 # predicted_points = predicted_points.dropna()
 
 player_names = pd.read_csv('NFL_Fantasy_Scoring_Prediction/2021_to_2023_ff_data_w_fpt_avg_and_team_inj.csv')
 player_names = player_names[(player_names['week'] >= 5) & (player_names['position'].isin(['QB', 'WR', 'RB', 'TE']))]
-player_names = player_names[['player_id', 'full_name', 'position']].drop_duplicates()
+player_names = player_names[['player_id', 'week', 'full_name', 'position']].drop_duplicates()
+#player_names = player_names[['player_id', 'week', 'full_name', 'position', 'total_fantasy_points', 'total_fantasy_points_exp']].drop_duplicates()
+
+# Join predicted points w/ player names and predictions from NFLReadr
+predicted_points_test = pd.merge(predicted_points, player_names, on=['player_id'], how='left')
+
+# My worst predictions
+third_quartile = predicted_points_test['absolute_error'].quantile(0.75)
+worst_predictions = predicted_points_test[predicted_points_test['absolute_error'] > third_quartile]
+
+# Which positions appear in my worst predictions most often
+worst_predictions_pct = round(worst_predictions['position'].value_counts(normalize=True) * 100, 2)
+position_pct = round(predicted_points_test['position'].value_counts(normalize=True) * 100, 2)
+
+pct_df = pd.DataFrame({
+    'predictions_pct': worst_predictions_pct,
+    'position_pct': position_pct
+})
+
+# Transpose to flip axes
+pct_df = pct_df.T
+ax = pct_df.plot(kind='bar', stacked=True)
+# Rotate x-axis labels to appear parallel to the axis
+plt.xticks(rotation=0)
+# Add labels inside the bar fills
+for container in ax.containers:
+    ax.bar_label(container, label_type='center')
+plt.title('Percentage of total that a position makes up')
+plt.xlabel('Position')
+plt.ylabel('Pct')
+plt.legend(title='Category / Position Pct', bbox_to_anchor=(1.05, 1), loc='upper left')
+# TE's are underrepresented in my worst 25% of predictions while Qbs and Rbs are over represented
 
 
-predicted_points_test = pd.merge(predicted_points, player_names, on='player_id', how='left')
+# Which positions appear in my best predictions most often
+first_quartile = predicted_points_test['absolute_error'].quantile(0.25)
+best_predictions = predicted_points_test[predicted_points_test['absolute_error'] < first_quartile]
+best_predictions_pct = round(best_predictions['position'].value_counts(normalize=True) * 100, 2)
+
+best_pct_df = pd.DataFrame({
+    'predictions_pct': best_predictions_pct,
+    'actual_pct': position_pct
+})
+
+best_pct_df = best_pct_df.T
+
+ax = best_pct_df.plot(kind='bar', stacked=True)
+plt.xticks(rotation=0)
+
+for container in ax.containers:
+    ax.bar_label(container, label_type='center')
+plt.title('Percentage of total that a position makes up')
+plt.xlabel('Position')
+plt.ylabel('Pct')
+# Similarly TEs are overrepresented in my best predictions while Qbs are underrepresented, and WR and RBs are about even
+
+# How does this compare to actual predictions
+
+
 abs_desc = predicted_points_test.sort_values(by='absolute_error', ascending=True)
 abs_desc.head()
 
